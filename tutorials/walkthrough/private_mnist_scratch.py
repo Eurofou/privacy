@@ -1,4 +1,4 @@
-# Copyright 2018, The TensorFlow Authors.
+# Copyright 2019, The TensorFlow Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,8 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Training a CNN on MNIST with differentially private SGD optimizer."""
 
+"""Scratchpad for training a CNN on MNIST with DPSGD."""
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
@@ -21,58 +21,18 @@ from __future__ import print_function
 import numpy as np
 import tensorflow as tf
 
+from privacy import optimizers
 from privacy.analysis import privacy_ledger
-from privacy.analysis.rdp_accountant import compute_rdp_from_ledger
-from privacy.analysis.rdp_accountant import get_privacy_spent
-from privacy.optimizers import dp_optimizer
 
-import argparse
-
-parser = argparse.ArgumentParser(prog='mnist_dpsgd', allow_abbrev=False)
-parser.add_argument('--dp', action='store_true')
-
-args = parser.parse_args()
-
-# Compatibility with tf 1 and 2 APIs
-try:
-  GradientDescentOptimizer = tf.train.GradientDescentOptimizer
-except:  # pylint: disable=bare-except
-  GradientDescentOptimizer = tf.optimizers.SGD  # pylint: disable=invalid-name
-
-tf.flags.DEFINE_boolean('dpsgd', args.dp, 'If True, train with DP-SGD. If False, '
-                        'train with vanilla SGD.')
 tf.flags.DEFINE_float('learning_rate', .15, 'Learning rate for training')
-tf.flags.DEFINE_float('noise_multiplier', 1.1,
-                      'Ratio of the standard deviation to the clipping norm')
-tf.flags.DEFINE_float('l2_norm_clip', 1.0, 'Clipping norm')
 tf.flags.DEFINE_integer('batch_size', 256, 'Batch size')
-tf.flags.DEFINE_integer('epochs', 1, 'Number of epochs')
-tf.flags.DEFINE_integer('microbatches', 256, 'Number of microbatches '
-                        '(must evenly divide batch_size)')
-tf.flags.DEFINE_string('model_dir', None, 'Model directory')
+tf.flags.DEFINE_integer('epochs', 15, 'Number of epochs')
+
+tf.flags.DEFINE_float('noise_multiplier', 1.3, 'Noise multiplier')
+tf.flags.DEFINE_float('l2_norm_clip', 1.5, 'L2 norm clipping cut-off')
+tf.flags.DEFINE_integer('microbatches', 256, 'Number of microbatchs')
 
 FLAGS = tf.flags.FLAGS
-
-
-class EpsilonPrintingTrainingHook(tf.estimator.SessionRunHook):
-  """Training hook to print current value of epsilon after an epoch."""
-
-  def __init__(self, ledger):
-    """Initalizes the EpsilonPrintingTrainingHook.
-
-    Args:
-      ledger: The privacy ledger.
-    """
-    self._samples, self._queries = ledger.get_unformatted_ledger()
-
-  def end(self, session):
-    orders = [1 + x / 10.0 for x in range(1, 100)] + list(range(12, 64))
-    samples = session.run(self._samples)
-    queries = session.run(self._queries)
-    formatted_ledger = privacy_ledger.format_ledger(samples, queries)
-    rdp = compute_rdp_from_ledger(formatted_ledger, orders)
-    eps = get_privacy_spent(orders, rdp, target_delta=1e-5)[0]
-    print('For delta=1e-5, the current epsilon is: %.2f' % eps)
 
 
 def cnn_model_fn(features, labels, mode):
@@ -94,50 +54,37 @@ def cnn_model_fn(features, labels, mode):
   y = tf.keras.layers.Dense(32, activation='relu').apply(y)
   logits = tf.keras.layers.Dense(10).apply(y)
 
-  # Calculate loss as a vector (to support microbatches in DP-SGD).
-  vector_loss = tf.nn.sparse_softmax_cross_entropy_with_logits(
-      labels=labels, logits=logits)
-  # Define mean of loss across minibatch (for reporting through tf.Estimator).
+  # Calculate loss as a vector and as its average across minibatch.
+  vector_loss = tf.nn.sparse_softmax_cross_entropy_with_logits(labels=labels,
+                                                               logits=logits)
   scalar_loss = tf.reduce_mean(vector_loss)
 
   # Configure the training op (for TRAIN mode).
   if mode == tf.estimator.ModeKeys.TRAIN:
+    # optimizer = tf.train.GradientDescentOptimizer(FLAGS.learning_rate)
+    # opt_loss = scalar_loss
+    # global_step = tf.train.get_global_step()
+    # train_op = optimizer.minimize(loss=opt_loss, global_step=global_step)
 
-    if FLAGS.dpsgd:
-      ledger = privacy_ledger.PrivacyLedger(
-          population_size=60000,
-          selection_probability=(FLAGS.batch_size / 60000),
-          max_samples=1e6,
-          max_queries=1e6)
 
-      # Use DP version of GradientDescentOptimizer. Other optimizers are
-      # available in dp_optimizer. Most optimizers inheriting from
-      # tf.train.Optimizer should be wrappable in differentially private
-      # counterparts by calling dp_optimizer.optimizer_from_args().
-      optimizer = dp_optimizer.DPGradientDescentGaussianOptimizer(
-          l2_norm_clip=FLAGS.l2_norm_clip,
-          noise_multiplier=FLAGS.noise_multiplier,
-          num_microbatches=FLAGS.microbatches,
-          ledger=ledger,
-          learning_rate=FLAGS.learning_rate)
-      training_hooks = [
-          EpsilonPrintingTrainingHook(ledger)
-      ]
-      opt_loss = vector_loss
-    else:
-      optimizer = GradientDescentOptimizer(learning_rate=FLAGS.learning_rate)
-      training_hooks = []
-      opt_loss = scalar_loss
-    global_step = tf.train.get_global_step()
-    train_op = optimizer.minimize(loss=opt_loss, global_step=global_step)
-    # In the following, we pass the mean of the loss (scalar_loss) rather than
-    # the vector_loss because tf.estimator requires a scalar loss. This is only
-    # used for evaluation and debugging by tf.estimator. The actual loss being
-    # minimized is opt_loss defined above and passed to optimizer.minimize().
+    ledger = privacy_ledger.PrivacyLedger(
+        population_size=60000,
+        selection_probability=(FLAGS.batch_size / 60000),
+        max_samples=1e6,
+        max_queries=1e6)
+
+    optimizer = optimizers.dp_optimizer.DPGradientDescentGaussianOptimizer(
+        l2_norm_clip=FLAGS.l2_norm_clip,
+        noise_multiplier=FLAGS.noise_multiplier,
+        num_microbatches=FLAGS.microbatches,
+        ledger=ledger,
+        learning_rate=FLAGS.learning_rate 
+        )   # population_size=60000
+    train_op = optimizer.minimize(loss=vector_loss)
+
     return tf.estimator.EstimatorSpec(mode=mode,
                                       loss=scalar_loss,
-                                      train_op=train_op,
-                                      training_hooks=training_hooks)
+                                      train_op=train_op)
 
   # Add evaluation metrics (for EVAL mode).
   elif mode == tf.estimator.ModeKeys.EVAL:
@@ -147,7 +94,6 @@ def cnn_model_fn(features, labels, mode):
                 labels=labels,
                 predictions=tf.argmax(input=logits, axis=1))
     }
-
     return tf.estimator.EstimatorSpec(mode=mode,
                                       loss=scalar_loss,
                                       eval_metric_ops=eval_metric_ops)
@@ -177,15 +123,12 @@ def load_mnist():
 
 def main(unused_argv):
   tf.logging.set_verbosity(tf.logging.INFO)
-  if FLAGS.batch_size % FLAGS.microbatches != 0:
-    raise ValueError('Number of microbatches should divide evenly batch_size')
 
   # Load training and test data.
   train_data, train_labels, test_data, test_labels = load_mnist()
 
   # Instantiate the tf.Estimator.
-  mnist_classifier = tf.estimator.Estimator(model_fn=cnn_model_fn,
-                                            model_dir=FLAGS.model_dir)
+  mnist_classifier = tf.estimator.Estimator(model_fn=cnn_model_fn)
 
   # Create tf.Estimator input functions for the training and test data.
   train_input_fn = tf.estimator.inputs.numpy_input_fn(

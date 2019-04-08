@@ -44,14 +44,21 @@ from privacy.analysis.rdp_accountant import compute_rdp
 from privacy.analysis.rdp_accountant import get_privacy_spent
 from privacy.optimizers import dp_optimizer
 
-tf.flags.DEFINE_boolean('dpsgd', True, 'If True, train with DP-SGD. If False, '
+import argparse
+
+parser = argparse.ArgumentParser(prog='lm_dpsgd', allow_abbrev=False)
+parser.add_argument('--dp', action='store_true')
+
+args = parser.parse_args()
+
+tf.flags.DEFINE_boolean('dpsgd', args.dp, 'If True, train with DP-SGD. If False, '
                         'train with vanilla SGD.')
 tf.flags.DEFINE_float('learning_rate', .001, 'Learning rate for training')
 tf.flags.DEFINE_float('noise_multiplier', 0.001,
                       'Ratio of the standard deviation to the clipping norm')
 tf.flags.DEFINE_float('l2_norm_clip', 1.0, 'Clipping norm')
 tf.flags.DEFINE_integer('batch_size', 256, 'Batch size')
-tf.flags.DEFINE_integer('epochs', 60, 'Number of epochs')
+tf.flags.DEFINE_integer('epochs', 1, 'Number of epochs')
 tf.flags.DEFINE_integer('microbatches', 256, 'Number of microbatches '
                         '(must evenly divide batch_size)')
 tf.flags.DEFINE_string('model_dir', None, 'Model directory')
@@ -188,10 +195,18 @@ def main(unused_argv):
 
   # Training loop.
   steps_per_epoch = len(train_data) // batch_len
+  from datetime import datetime
+  
+
+  start_times = list()
+  end_times = list()
   for epoch in range(1, FLAGS.epochs + 1):
+    start_times.append(datetime.now())
     print('epoch', epoch)
     # Train the model for one epoch.
     lm_classifier.train(input_fn=train_input_fn, steps=steps_per_epoch)
+
+    end_times.append(datetime.now())
 
     if epoch % 5 == 0:
       name_input_fn = [('Train', train_input_fn), ('Eval', eval_input_fn)]
@@ -201,12 +216,20 @@ def main(unused_argv):
         result_tuple = (epoch, eval_results['accuracy'], eval_results['loss'])
         print(name, 'accuracy after %d epochs is: %.3f (%.4f)' % result_tuple)
 
+
+    print('Trained epoch {} in {} seconds'.format(FLAGS.epochs, (end_times[-1] - start_times[-1]).total_seconds()))
+
     # Compute the privacy budget expended so far.
     if FLAGS.dpsgd:
       eps = compute_epsilon(epoch * steps_per_epoch)
       print('For delta=1e-5, the current epsilon is: %.2f' % eps)
     else:
       print('Trained with vanilla non-private SGD optimizer')
+
+    print('timing starts:')
+    print(start_times)
+    print('timing ends:')
+    print(end_times)
 
 if __name__ == '__main__':
   tf.app.run()

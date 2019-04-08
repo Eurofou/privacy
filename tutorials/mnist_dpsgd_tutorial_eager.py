@@ -24,6 +24,13 @@ from privacy.analysis.rdp_accountant import get_privacy_spent
 from privacy.dp_query.gaussian_query import GaussianAverageQuery
 from privacy.optimizers.dp_optimizer import DPGradientDescentOptimizer
 
+
+parser = argparse.ArgumentParser(prog='mnist_dpsgd', allow_abbrev=False)
+parser.add_argument('--dp', action='store_true')
+
+args = parser.parse_args()
+
+
 # Compatibility with tf 1 and 2 APIs
 try:
   GradientDescentOptimizer = tf.train.GradientDescentOptimizer
@@ -32,14 +39,14 @@ except:  # pylint: disable=bare-except
 
 tf.enable_eager_execution()
 
-tf.flags.DEFINE_boolean('dpsgd', True, 'If True, train with DP-SGD. If False, '
+tf.flags.DEFINE_boolean('dpsgd', args.dp, 'If True, train with DP-SGD. If False, '
                         'train with vanilla SGD.')
 tf.flags.DEFINE_float('learning_rate', 0.15, 'Learning rate for training')
 tf.flags.DEFINE_float('noise_multiplier', 1.1,
                       'Ratio of the standard deviation to the clipping norm')
 tf.flags.DEFINE_float('l2_norm_clip', 1.0, 'Clipping norm')
 tf.flags.DEFINE_integer('batch_size', 250, 'Batch size')
-tf.flags.DEFINE_integer('epochs', 60, 'Number of epochs')
+tf.flags.DEFINE_integer('epochs', 1, 'Number of epochs')
 tf.flags.DEFINE_integer('microbatches', 250, 'Number of microbatches '
                         '(must evenly divide batch_size)')
 
@@ -107,6 +114,8 @@ def main(_):
 
   # Training loop.
   steps_per_epoch = 60000 // FLAGS.batch_size
+  from datetime import datetime
+  start = datetime.now()
   for epoch in range(FLAGS.epochs):
     # Train the model for one epoch.
     for (_, (images, labels)) in enumerate(dataset.take(-1)):
@@ -134,6 +143,8 @@ def main(_):
       global_step = tf.train.get_or_create_global_step()
       opt.apply_gradients(grads_and_vars, global_step=global_step)
 
+    print('Trained {} epoch(s) in {} seconds'.format(FLAGS.epochs, (datetime.now() - start).total_seconds()))
+    
     # Evaluate the model and print results
     for (_, (images, labels)) in enumerate(eval_dataset.take(-1)):
       logits = mnist_model(images, training=False)
