@@ -195,18 +195,21 @@ def main(unused_argv):
 
   # Training loop.
   steps_per_epoch = len(train_data) // batch_len
-  from datetime import datetime
-  
 
+  from datetime import datetime
   start_times = list()
   end_times = list()
+
   for epoch in range(1, FLAGS.epochs + 1):
+
     start_times.append(datetime.now())
+
     print('epoch', epoch)
     # Train the model for one epoch.
     lm_classifier.train(input_fn=train_input_fn, steps=steps_per_epoch)
 
     end_times.append(datetime.now())
+    print('Trained epoch %s in %s seconds' % (FLAGS.epochs, (end_times[-1] - start_times[-1]).total_seconds()))
 
     if epoch % 5 == 0:
       name_input_fn = [('Train', train_input_fn), ('Eval', eval_input_fn)]
@@ -217,8 +220,6 @@ def main(unused_argv):
         print(name, 'accuracy after %d epochs is: %.3f (%.4f)' % result_tuple)
 
 
-    print('Trained epoch {} in {} seconds'.format(FLAGS.epochs, (end_times[-1] - start_times[-1]).total_seconds()))
-
     # Compute the privacy budget expended so far.
     if FLAGS.dpsgd:
       eps = compute_epsilon(epoch * steps_per_epoch)
@@ -226,10 +227,10 @@ def main(unused_argv):
     else:
       print('Trained with vanilla non-private SGD optimizer')
 
-    print('timing starts:')
-    print(start_times)
-    print('timing ends:')
-    print(end_times)
+  print('timing starts:')
+  print(start_times)
+  print('timing ends:')
+  print(end_times)
 
 if __name__ == '__main__':
   tf.app.run()

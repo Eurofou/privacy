@@ -24,6 +24,7 @@ from privacy.analysis.rdp_accountant import get_privacy_spent
 from privacy.dp_query.gaussian_query import GaussianAverageQuery
 from privacy.optimizers.dp_optimizer import DPGradientDescentOptimizer
 
+import argparse
 
 parser = argparse.ArgumentParser(prog='mnist_dpsgd', allow_abbrev=False)
 parser.add_argument('--dp', action='store_true')
@@ -112,11 +113,18 @@ def main(_):
   else:
     opt = GradientDescentOptimizer(learning_rate=FLAGS.learning_rate)
 
+
   # Training loop.
   steps_per_epoch = 60000 // FLAGS.batch_size
+
   from datetime import datetime
-  start = datetime.now()
+  start_times = list()
+  end_times = list()
+
   for epoch in range(FLAGS.epochs):
+
+    start_times.append(datetime.now())
+
     # Train the model for one epoch.
     for (_, (images, labels)) in enumerate(dataset.take(-1)):
       with tf.GradientTape(persistent=True) as gradient_tape:
@@ -143,7 +151,8 @@ def main(_):
       global_step = tf.train.get_or_create_global_step()
       opt.apply_gradients(grads_and_vars, global_step=global_step)
 
-    print('Trained {} epoch(s) in {} seconds'.format(FLAGS.epochs, (datetime.now() - start).total_seconds()))
+    end_times.append(datetime.now())
+    print('Trained epoch %s in %s seconds' % (FLAGS.epochs, (end_times[-1] - start_times[-1]).total_seconds()))
     
     # Evaluate the model and print results
     for (_, (images, labels)) in enumerate(eval_dataset.take(-1)):
@@ -158,6 +167,11 @@ def main(_):
       print('For delta=1e-5, the current epsilon is: %.2f' % eps)
     else:
       print('Trained with vanilla non-private SGD optimizer')
+
+  print('timing starts:')
+  print(start_times)
+  print('timing ends:')
+  print(end_times)
 
 if __name__ == '__main__':
   tf.app.run(main)

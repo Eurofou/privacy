@@ -202,14 +202,30 @@ def main(unused_argv):
 
   # Training loop.
   steps_per_epoch = 60000 // FLAGS.batch_size
+
+  from datetime import datetime
+  start_times = list()
+  end_times = list()
+
   for epoch in range(1, FLAGS.epochs + 1):
+
+    start_times.append(datetime.now())
+
     # Train the model for one epoch.
     mnist_classifier.train(input_fn=train_input_fn, steps=steps_per_epoch)
+
+    end_times.append(datetime.now())
+    print('Trained epoch %s in %s seconds' % (FLAGS.epochs, (end_times[-1] - start_times[-1]).total_seconds()))
 
     # Evaluate the model and print results
     eval_results = mnist_classifier.evaluate(input_fn=eval_input_fn)
     test_accuracy = eval_results['accuracy']
     print('Test accuracy after %d epochs is: %.3f' % (epoch, test_accuracy))
+
+  print('timing starts:')
+  print(start_times)
+  print('timing ends:')
+  print(end_times)
 
 if __name__ == '__main__':
   tf.app.run()
