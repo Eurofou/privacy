@@ -42,12 +42,16 @@ import tensorflow_datasets as tfds
 
 from privacy.analysis.rdp_accountant import compute_rdp
 from privacy.analysis.rdp_accountant import get_privacy_spent
+from privacy.analysis import privacy_ledger
 from privacy.optimizers import dp_optimizer
+
+# tf.enable_eager_execution()
 
 import argparse
 
 parser = argparse.ArgumentParser(prog='lm_dpsgd', allow_abbrev=False)
 parser.add_argument('--dp', action='store_true')
+parser.add_argument('--float16', action='store_true')
 
 args = parser.parse_args()
 
@@ -64,7 +68,24 @@ tf.flags.DEFINE_integer('microbatches', 256, 'Number of microbatches '
 tf.flags.DEFINE_string('model_dir', None, 'Model directory')
 tf.flags.DEFINE_string('data_dir', None, 'Directory containing the PTB data.')
 
+# tf.flags.DEFINE_boolean('float16', args.float16, 'If True, train use half floats. '
+#                         'If False, use defaults (singles).')
+
 FLAGS = tf.flags.FLAGS
+
+# DTYPE = tf.float32
+# if args.float16:
+
+#   DTYPE = tf.float16
+#   tf.keras.backend.set_floatx(DTYPE.name)
+
+#   # default for float32 is 1e-7, some suggest 1e-4 for float16
+#   tf.keras.backend.set_epsilon(1e-6) 
+
+# print('Using (%s, %s) as (dtype, epsilon) in keras' % 
+#       (tf.keras.backend.floatx(), tf.keras.backend.epsilon()))
+
+# print('Executing eagerly is: %s' % (tf.executing_eagerly()))
 
 SEQ_LEN = 80
 NB_TRAIN = 45000
@@ -78,6 +99,9 @@ def rnn_model_fn(features, labels, mode):  # pylint: disable=unused-argument
   x = tf.reshape(x, [-1, SEQ_LEN])
   input_layer = x[:, :-1]
   input_one_hot = tf.one_hot(input_layer, 256)
+  # if FLAGS.float16:
+  #   input_one_hot = tf.cast(input_one_hot, tf.float16)
+
   lstm = tf.keras.layers.LSTM(256, return_sequences=True).apply(input_one_hot)
   logits = tf.keras.layers.Dense(256).apply(lstm)
 
@@ -91,13 +115,21 @@ def rnn_model_fn(features, labels, mode):  # pylint: disable=unused-argument
   # Configure the training op (for TRAIN mode).
   if mode == tf.estimator.ModeKeys.TRAIN:
     if FLAGS.dpsgd:
+
+      ledger = privacy_ledger.PrivacyLedger(
+          population_size=NB_TRAIN,
+          selection_probability=(FLAGS.batch_size / NB_TRAIN),
+          max_samples=1e6,
+          max_queries=1e6)
+
       optimizer = dp_optimizer.DPAdamGaussianOptimizer(
           l2_norm_clip=FLAGS.l2_norm_clip,
           noise_multiplier=FLAGS.noise_multiplier,
           num_microbatches=FLAGS.microbatches,
+          ledger=ledger,
           learning_rate=FLAGS.learning_rate,
-          unroll_microbatches=True,
-          population_size=NB_TRAIN)
+          unroll_microbatches=True
+          ) # population_size=NB_TRAIN
       opt_loss = vector_loss
     else:
       optimizer = tf.train.AdamOptimizer(
@@ -181,6 +213,12 @@ def main(unused_argv):
   # Create tf.Estimator input functions for the training and test data.
   batch_len = FLAGS.batch_size * SEQ_LEN
   train_data_end = len(train_data) - len(train_data) % batch_len
+
+
+  # print('Training on dataset with shape:', train_data[:train_data_end].shape)
+  # quit()
+
+
   test_data_end = len(test_data) - len(test_data) % batch_len
   train_input_fn = tf.estimator.inputs.numpy_input_fn(
       x={'x': train_data[:train_data_end]},
