@@ -26,6 +26,10 @@ from privacy.analysis.rdp_accountant import compute_rdp_from_ledger
 from privacy.analysis.rdp_accountant import get_privacy_spent
 from privacy.optimizers import dp_optimizer
 
+#from tensorflow.train import ProfilerHook
+from tensorflow.profiler import ProfileOptionBuilder, Profiler
+from datetime import datetime
+
 import argparse
 
 parser = argparse.ArgumentParser(prog='mnist_dpsgd', allow_abbrev=False)
@@ -46,7 +50,7 @@ tf.flags.DEFINE_float('noise_multiplier', 1.1,
                       'Ratio of the standard deviation to the clipping norm')
 tf.flags.DEFINE_float('l2_norm_clip', 1.0, 'Clipping norm')
 tf.flags.DEFINE_integer('batch_size', 256, 'Batch size')
-tf.flags.DEFINE_integer('epochs', 6, 'Number of epochs')
+tf.flags.DEFINE_integer('epochs', 60, 'Number of epochs')
 tf.flags.DEFINE_integer('microbatches', 256, 'Number of microbatches '
                         '(must evenly divide batch_size)')
 tf.flags.DEFINE_string('model_dir', None, 'Model directory')
@@ -104,16 +108,19 @@ def cnn_model_fn(features, labels, mode):
   if mode == tf.estimator.ModeKeys.TRAIN:
 
     if FLAGS.dpsgd:
+
+      # Use DP version of GradientDescentOptimizer. Other optimizers are
+      # available in dp_optimizer. Most optimizers inheriting from
+      # tf.train.Optimizer should be wrappable in differentially private
+      # counterparts by calling dp_optimizer.optimizer_from_args().
+
       ledger = privacy_ledger.PrivacyLedger(
           population_size=60000,
           selection_probability=(FLAGS.batch_size / 60000),
           max_samples=1e6,
           max_queries=1e6)
 
-      # Use DP version of GradientDescentOptimizer. Other optimizers are
-      # available in dp_optimizer. Most optimizers inheriting from
-      # tf.train.Optimizer should be wrappable in differentially private
-      # counterparts by calling dp_optimizer.optimizer_from_args().
+
       optimizer = dp_optimizer.DPGradientDescentGaussianOptimizer(
           l2_norm_clip=FLAGS.l2_norm_clip,
           noise_multiplier=FLAGS.noise_multiplier,
@@ -128,6 +135,16 @@ def cnn_model_fn(features, labels, mode):
       optimizer = GradientDescentOptimizer(learning_rate=FLAGS.learning_rate)
       training_hooks = []
       opt_loss = scalar_loss
+
+
+    #log_dir = './logs/%s' % (datetime.now().strftime('%Y-%m-%d_%H:%M:%S'))
+    #profiler = ProfilerHook(save_secs=10, output_dir=log_dir)  # , show_memory=True
+
+    # profiler = Profiler()
+    # opts = ProfileOptionBuilder.time_and_memory()
+    # profiler.profile_operations(options=opts)
+    # training_hooks.append(profiler)
+
     global_step = tf.train.get_global_step()
     train_op = optimizer.minimize(loss=opt_loss, global_step=global_step)
     # In the following, we pass the mean of the loss (scalar_loss) rather than
@@ -207,20 +224,27 @@ def main(unused_argv):
   start_times = list()
   end_times = list()
 
-  for epoch in range(1, FLAGS.epochs + 1):
+  log_dir = '/Users/timgarnsey/projects/eurofou-privacy/tutorials/logs/%s' % (datetime.now().strftime('%Y-%m-%d_%H:%M:%S'))
+  print(log_dir)
+  #log_dir, trace_steps=range(100, 200, 3), dump_steps=[150, 200]) as pctx:
+  with tf.contrib.tfprof.ProfileContext(profile_dir=log_dir, trace_steps=[250], dump_steps=[250]) as pctx:
+    opts = tf.profiler.ProfileOptionBuilder.time_and_memory()
+    pctx.add_auto_profiling('op', opts, [250])
 
-    start_times.append(datetime.now())
+    for epoch in range(1, FLAGS.epochs + 1):
 
-    # Train the model for one epoch.
-    mnist_classifier.train(input_fn=train_input_fn, steps=steps_per_epoch)
+      start_times.append(datetime.now())
 
-    end_times.append(datetime.now())
-    print('Trained epoch %s in %s seconds' % (FLAGS.epochs, (end_times[-1] - start_times[-1]).total_seconds()))
+      # Train the model for one epoch.
+      mnist_classifier.train(input_fn=train_input_fn, steps=steps_per_epoch)
 
-    # Evaluate the model and print results
-    eval_results = mnist_classifier.evaluate(input_fn=eval_input_fn)
-    test_accuracy = eval_results['accuracy']
-    print('Test accuracy after %d epochs is: %.3f' % (epoch, test_accuracy))
+      end_times.append(datetime.now())
+      print('Trained epoch %s in %s seconds' % (FLAGS.epochs, (end_times[-1] - start_times[-1]).total_seconds()))
+
+      # Evaluate the model and print results
+      eval_results = mnist_classifier.evaluate(input_fn=eval_input_fn)
+      test_accuracy = eval_results['accuracy']
+      print('Test accuracy after %d epochs is: %.3f' % (epoch, test_accuracy))
 
   print('timing starts:')
   print(start_times)
