@@ -40,6 +40,7 @@ import numpy as np
 import tensorflow as tf
 import tensorflow_datasets as tfds
 
+from privacy.analysis import privacy_ledger
 from privacy.analysis.rdp_accountant import compute_rdp
 from privacy.analysis.rdp_accountant import get_privacy_spent
 from privacy.analysis import privacy_ledger
@@ -57,7 +58,7 @@ args = parser.parse_args()
 
 tf.flags.DEFINE_boolean('dpsgd', args.dp, 'If True, train with DP-SGD. If False, '
                         'train with vanilla SGD.')
-tf.flags.DEFINE_float('learning_rate', .001, 'Learning rate for training')
+tf.flags.DEFINE_float('learning_rate', 0.001, 'Learning rate for training')
 tf.flags.DEFINE_float('noise_multiplier', 0.001,
                       'Ratio of the standard deviation to the clipping norm')
 tf.flags.DEFINE_float('l2_norm_clip', 1.0, 'Clipping norm')
@@ -128,8 +129,7 @@ def rnn_model_fn(features, labels, mode):  # pylint: disable=unused-argument
           num_microbatches=FLAGS.microbatches,
           ledger=ledger,
           learning_rate=FLAGS.learning_rate,
-          unroll_microbatches=True
-          ) # population_size=NB_TRAIN
+          unroll_microbatches=True)
       opt_loss = vector_loss
     else:
       optimizer = tf.train.AdamOptimizer(
